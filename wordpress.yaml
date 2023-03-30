@@ -1,0 +1,107 @@
+- hosts: wordpress-server
+  become: yes
+
+  vars:
+    mysql_root_password: "mypassword"
+    wordpress_db_name: "wordpress"
+    wordpress_db_user: "wordpress"
+    wordpress_db_password: "wordpresspassword"
+    wordpress_admin_user: "admin"
+    wordpress_admin_password: "adminpassword"
+    wordpress_admin_email: "admin@example.com"
+
+  tasks:
+    - name: Installer Apache et PHP
+      yum:
+        name:
+          - httpd
+          - php
+          - php-mysql
+          - php-gd
+          - php-xmlrpc
+          - php-xml
+          - php-mbstring
+        state: present
+
+    - name: Installer MySQL
+      yum:
+        name: mysql-server
+        state: present
+
+    - name: Démarrer et activer les services
+      systemd:
+        name:
+          - httpd
+          - mysqld
+        state: started
+        enabled: yes
+
+    - name: Configurer MySQL
+      mysql_user:
+        name: root
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Créer la base de données MySQL
+      mysql_db:
+        name: "{{ wordpress_db_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Créer l'utilisateur MySQL
+      mysql_user:
+        name: "{{ wordpress_db_user }}"
+        password: "{{ wordpress_db_password }}"
+        host: localhost
+        priv: "{{ wordpress_db_name }}.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Télécharger WordPress
+      get_url:
+        url: "https://wordpress.org/latest.tar.gz"
+        dest: "/tmp/wordpress.tar.gz"
+
+    - name: Extraire les fichiers de WordPress
+      unarchive:
+        src: "/tmp/wordpress.tar.gz"
+        dest: "/var/www/html"
+        owner: apache
+        group: apache
+        mode: 'u=rwX,g=rwX,o=rX'
+
+    - name: Configurer WordPress
+      template:
+        src: "wp-config.php.j2"
+        dest: "/var/www/html/wp-config.php"
+        owner: apache
+        group: apache
+        mode: 'u=rw,g=r,o=r'
+
+    - name: Configurer le site WordPress
+      template:
+        src: "wordpress.conf.j2"
+        dest: "/etc/httpd/conf.d/wordpress.conf"
+        owner: root
+        group: root
+        mode: 'u=rw,g=r,o=r'
+
+    - name: Créer un utilisateur WordPress
+      shell: "/usr/bin/wp user create {{ wordpress_admin_user }} {{ wordpress_admin_email }} --user_pass={{ wordpress_admin_password }}"
+      args:
+        chdir: /var/www/html/
+        executable: /bin/bash
+        creates: /var/www/html/wp-config.php
+
+    - name: Ouvrir le port 80 dans le pare-feu
+      firewalld:
+        service: http
+        permanent: yes
+        state: enabled
+
+    - name: Redémarrer le service Apache
+      systemd:
+        name: httpd
+        state: restarted
